@@ -42,5 +42,5 @@ It includes **EDA (Exploratory Data Analysis)** and **prediction tools** for sin
 
 1. Clone the repo:
    ```bash
-   git clone https://github.com/your-username/customer-churn-ml-app.git
+   git clone https://github.com/your-AdeyemoOpeyemi/customer-churn-ml-app.git
    cd customer-churn-ml-app
