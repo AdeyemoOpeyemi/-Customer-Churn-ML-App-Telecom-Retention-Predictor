@@ -1,201 +1,195 @@
-# ===============================
-# app.py - Customer Churn Prediction (Robust CSV Handling)
-# ===============================
-import streamlit as st
-import pandas as pd
+import os
 import joblib
+import pandas as pd
+import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 
-# ==================================
-# Load artifacts
-# ==================================
-model = joblib.load("best_model.pkl")
-encoder = joblib.load("encoder.pkl")
-scaler = joblib.load("scaler.pkl")
+# =========================
+# Path Setup
+# =========================
+BASE_DIR = r"C:\Users\USER\Desktop\Testing\Churning"
 
-# Load cleaned dataset for options
-df = pd.read_csv("Churning_cleaned.csv")
+DATA_PATH = os.path.join(BASE_DIR, "Data", "Churning_cleaned.csv")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "best_model.pkl")
+ENCODER_PATH = os.path.join(BASE_DIR, "models", "encoder.pkl")
+SCALER_PATH = os.path.join(BASE_DIR, "models", "scaler.pkl")
 
-categorical_cols = [
-    "gender", "SeniorCitizen", "Partner", "Dependents", "PhoneService",
-    "MultipleLines", "InternetService", "OnlineSecurity", "OnlineBackup",
-    "DeviceProtection", "TechSupport", "StreamingTV", "StreamingMovies",
-    "Contract", "PaperlessBilling", "PaymentMethod"
-]
-numerical_cols = ["tenure", "MonthlyCharges", "TotalCharges"]
+# =========================
+# Load Model + Preprocessors
+# =========================
+@st.cache_resource
+def load_artifacts():
+    if not os.path.exists(MODEL_PATH):
+        st.error(f"❌ Model not found at {MODEL_PATH}. Please place 'best_model.pkl' in the 'models/' folder.")
+        return None, None, None
 
-for col in categorical_cols:
-    df[col] = df[col].astype(str)
+    try:
+        model = joblib.load(MODEL_PATH)
+        encoder = joblib.load(ENCODER_PATH)
+        scaler = joblib.load(SCALER_PATH)
+        return model, encoder, scaler
+    except Exception as e:
+        st.error(f"Error loading artifacts: {e}")
+        return None, None, None
 
-# ==================================
-# Sidebar navigation
-# ==================================
+# =========================
+# Load Dataset
+# =========================
+@st.cache_data
+def load_data():
+    if not os.path.exists(DATA_PATH):
+        st.error(f"❌ Dataset not found at {DATA_PATH}. Please place 'Churning_cleaned.csv' in the Data folder.")
+        return None
+    return pd.read_csv(DATA_PATH)
+
+# =========================
+# Sidebar Navigation
+# =========================
 st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to", ["Home", "EDA", "Prediction"])
 
-# Enable EDA option
-show_eda = st.sidebar.checkbox("Enable EDA Page", value=True)
+# =========================
+# Load resources
+# =========================
+model, encoder, scaler = load_artifacts()
+data = load_data()
 
-pages = ["Home", "Prediction"]
-if show_eda:
-    pages.insert(1, "EDA")
-
-page = st.sidebar.radio("Go to", pages)
-
-# ==================================
-# Home Page
-# ==================================
+# =========================
+# Pages
+# =========================
 if page == "Home":
-    st.title("📊 Customer Churn Prediction App")
-    st.write("""
-        Welcome!  
-        - Use the **EDA page** to explore data (if enabled).  
-        - Use **Prediction page** to check customer churn.  
-    """)
+    st.title("📊 Customer Churn Analysis App")
+    st.write(
+        """
+        Welcome to the **Customer Churn Prediction App**.
+        - Use the **EDA** section to explore the dataset.
+        - Use the **Prediction** section to check churn probability for single or multiple customers.
+        """
+    )
 
-# ==================================
-# EDA Page
-# ==================================
 elif page == "EDA":
-    st.title("Exploratory Data Analysis (EDA)")
+    st.title("🔍 Exploratory Data Analysis")
+    if data is not None:
+        st.write("### Dataset Preview")
+        st.dataframe(data.head())
 
-    st.subheader("Data Overview")
-    st.write(df.head())
+        st.write("### Dataset Info")
+        st.write(f"Rows: {data.shape[0]}, Columns: {data.shape[1]}")
 
-    st.subheader("Summary Statistics")
-    st.write(df.describe(include="all"))
+        st.write("### Missing Values")
+        st.write(data.isnull().sum())
 
-    st.subheader("Churn Distribution")
-    fig, ax = plt.subplots()
-    sns.countplot(x="Churn", data=df, ax=ax)
-    st.pyplot(fig)
-
-    st.subheader("Numerical Feature Distributions")
-    for col in numerical_cols:
-        fig, ax = plt.subplots()
-        sns.histplot(df[col], kde=True, bins=30, ax=ax)
-        ax.set_title(f"Distribution of {col}")
-        st.pyplot(fig)
-
-# ==================================
-# Prediction Page
-# ==================================
-elif page == "Prediction":
+else:  # Prediction Page
     st.title("🔮 Predict Customer Churn")
+    if model is None or encoder is None or scaler is None:
+        st.stop()
 
-    st.subheader("Choose Input Method")
-    input_method = st.radio("Select input method:", ["Single Customer", "Upload CSV"])
-    input_df = None
+    input_method = st.radio("Choose Input Method", ["Single Customer", "Upload CSV"])
 
-    # -----------------------------
-    # Single customer input
-    # -----------------------------
+    # Default features
+    categorical_features = [
+        "gender", "SeniorCitizen", "Partner", "Dependents", "PhoneService",
+        "MultipleLines", "InternetService", "OnlineSecurity", "OnlineBackup",
+        "DeviceProtection", "TechSupport", "StreamingTV", "StreamingMovies",
+        "Contract", "PaperlessBilling", "PaymentMethod"
+    ]
+    numerical_features = ["tenure", "MonthlyCharges", "TotalCharges"]
+
+    # Let user select which features to keep
+    st.sidebar.write("⚙️ Feature Selection")
+    selected_categorical = st.sidebar.multiselect(
+        "Select Categorical Features", categorical_features, default=categorical_features
+    )
+    selected_numerical = st.sidebar.multiselect(
+        "Select Numerical Features", numerical_features, default=numerical_features
+    )
+
+    # ------------------- Single Customer -------------------
     if input_method == "Single Customer":
-        st.write("Enter details for a single customer:")
+        st.subheader("Enter details for a single customer:")
 
-        if "inputs" not in st.session_state:
-            st.session_state.inputs = {}
-
-        user_data = {}
-        st.subheader("Select Features to Include")
-        selected_cats = st.multiselect("Categorical Features", categorical_cols, default=categorical_cols)
-        selected_nums = st.multiselect("Numerical Features", numerical_cols, default=numerical_cols)
-
-        for col in selected_cats:
-            options = df[col].unique().tolist()
-            default_val = st.session_state.inputs.get(col, options[0])
-            user_data[col] = st.selectbox(f"{col}", options, index=options.index(default_val))
-
-        for col in selected_nums:
-            default_val = st.session_state.inputs.get(col, 0.0)
-            user_data[col] = st.number_input(f"{col}", min_value=0.0, value=float(default_val))
-
-        st.session_state.inputs = user_data
-        input_df = pd.DataFrame([user_data])
-
-    # -----------------------------
-    # Multiple customers via CSV
-    # -----------------------------
-    elif input_method == "Upload CSV":
-        uploaded_file = st.file_uploader("Upload a CSV with customer data", type=["csv"])
-        if uploaded_file is not None:
-            input_df = pd.read_csv(uploaded_file)
-            st.write("Preview of uploaded data:")
-            st.dataframe(input_df.head())
-
-            # Automatically select only features available in CSV that are in training
-            available_cats = [c for c in categorical_cols if c in input_df.columns]
-            available_nums = [c for c in numerical_cols if c in input_df.columns]
-
-            st.subheader("Select Features to Include")
-            selected_cats = st.multiselect("Categorical Features", available_cats, default=available_cats)
-            selected_nums = st.multiselect("Numerical Features", available_nums, default=available_nums)
-        else:
-            st.warning("Please upload a CSV file.")
-
-    # -----------------------------
-    # Process input
-    # -----------------------------
-    if input_df is not None:
-        # Fill missing categorical columns
-        for col in selected_cats:
-            if col not in input_df.columns:
-                input_df[col] = "Unknown"  # placeholder for missing
+        user_input = {}
+        for feature in selected_categorical:
+            if feature == "gender":
+                val = st.selectbox(feature, options=["Male", "Female"])
+            elif feature == "InternetService":
+                val = st.selectbox(feature, options=["DSL", "Fiber optic", "No"])
+            elif feature == "Contract":
+                val = st.selectbox(feature, options=["Month-to-month", "One year", "Two year"])
+            elif feature == "PaymentMethod":
+                val = st.selectbox(
+                    feature,
+                    options=[
+                        "Electronic check", "Mailed check",
+                        "Bank transfer (automatic)", "Credit card (automatic)"
+                    ]
+                )
             else:
-                input_df[col] = input_df[col].astype(str)
+                val = st.selectbox(feature, options=["Yes", "No"])
+            user_input[feature] = val
 
-        # Fill missing numerical columns
-        for col in selected_nums:
-            if col not in input_df.columns:
-                input_df[col] = 0
-            else:
-                input_df[col] = pd.to_numeric(input_df[col], errors="coerce").fillna(0)
+        for feature in selected_numerical:
+            val = st.number_input(feature, min_value=0.0, step=1.0)
+            user_input[feature] = val
 
-        # Ensure columns are in the same order as training
-        X_cat = input_df[selected_cats] if selected_cats else pd.DataFrame(np.empty((len(input_df), 0)))
-        X_num = input_df[selected_nums] if selected_nums else pd.DataFrame(np.empty((len(input_df), 0)))
-
-        # Encode categorical
-        if selected_cats:
-            input_encoded = encoder.transform(X_cat)
-            if hasattr(input_encoded, "toarray"):
-                input_encoded = input_encoded.toarray()
-        else:
-            input_encoded = np.empty((len(input_df), 0))
-
-        # Scale numerical
-        if selected_nums:
-            input_scaled = scaler.transform(X_num)
-        else:
-            input_scaled = np.empty((len(input_df), 0))
-
-        # Combine features
-        final_input = np.hstack((input_encoded, input_scaled))
-
-        # -----------------------------
-        # Make prediction
-        # -----------------------------
         if st.button("Predict"):
-            predictions = model.predict(final_input)
-            probabilities = model.predict_proba(final_input)[:, 1]
+            input_df = pd.DataFrame([user_input])
 
-            results_df = input_df[selected_cats + selected_nums].copy()
-            results_df["Churn_Prediction"] = ["CHURN" if p == 1 else "STAY" for p in predictions]
-            results_df["Churn_Probability"] = probabilities.round(2)
+            try:
+                # Apply preprocessing only on selected features
+                cat_data = encoder.transform(input_df[selected_categorical]) if selected_categorical else np.empty((1, 0))
+                num_data = scaler.transform(input_df[selected_numerical]) if selected_numerical else np.empty((1, 0))
+                X = np.hstack((cat_data, num_data))
 
-            st.subheader("Prediction Results")
-            st.dataframe(results_df)
+                prediction = model.predict(X)[0]
 
-            # Download CSV
-            csv = results_df.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Predictions as CSV",
-                data=csv,
-                file_name="churn_predictions.csv",
-                mime="text/csv"
-            )
+                probabilities = None
+                if hasattr(model, "predict_proba"):
+                    proba = model.predict_proba(X)
+                    if proba.shape[1] > 1:
+                        probabilities = proba[0, 1]
+                    else:
+                        probabilities = proba[0, 0]
 
-        if st.button("Reset Inputs"):
-            st.session_state.inputs = {}
-            st.experimental_rerun()
+                st.success(f"Prediction: {'Churn' if prediction == 1 else 'No Churn'}")
+                if probabilities is not None:
+                    st.info(f"Estimated probability of churn: {probabilities:.2%}")
+            except Exception as e:
+                st.error(f"Prediction error: {e}")
+
+    # ------------------- Upload CSV -------------------
+    else:
+        st.subheader("Upload customer data (CSV)")
+        uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+
+        if uploaded_file:
+            try:
+                upload_df = pd.read_csv(uploaded_file)
+                st.write("### Uploaded Data Preview")
+                st.dataframe(upload_df.head())
+
+                # Apply preprocessing only on selected features
+                cat_data = encoder.transform(upload_df[selected_categorical]) if selected_categorical else np.empty((len(upload_df), 0))
+                num_data = scaler.transform(upload_df[selected_numerical]) if selected_numerical else np.empty((len(upload_df), 0))
+                X = np.hstack((cat_data, num_data))
+
+                if st.button("Predict for Uploaded Data"):
+                    predictions = model.predict(X)
+
+                    probabilities = None
+                    if hasattr(model, "predict_proba"):
+                        proba = model.predict_proba(X)
+                        if proba.shape[1] > 1:
+                            probabilities = proba[:, 1]
+                        else:
+                            probabilities = proba[:, 0]
+
+                    results = upload_df.copy()
+                    results["Prediction"] = ["Churn" if p == 1 else "No Churn" for p in predictions]
+                    if probabilities is not None:
+                        results["Probability"] = probabilities
+
+                    st.write("### Predictions")
+                    st.dataframe(results.head())
+            except Exception as e:
+                st.error(f"Error processing file: {e}")
